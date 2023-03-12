@@ -554,7 +554,7 @@ uint bvh8_node_intersect(in Ray ray, uint oct_inv4, float max_distance, in BVH8N
 	return hit_mask;
 }
 
-bool triangle_intersect(int triangle_id, in Ray ray, float max_t, out float t, out float u, out float v)
+bool triangle_intersect(int triangle_id, in Ray ray, float max_t, out float t, out float u, out float v, int culling)
 {
 	vec3 pos0 = triangles[triangle_id*3].xyz;
 	vec3 edge1 = triangles[triangle_id*3 + 1].xyz;
@@ -562,6 +562,8 @@ bool triangle_intersect(int triangle_id, in Ray ray, float max_t, out float t, o
 	
 	vec3 h = cross(ray.direction, edge2);
 	float a = dot(edge1, h);
+
+	if ((culling == 1 && a<=0.0) || ((culling == 2) && a>=0.0) || a==0.0) return false;
 	
 	float f = 1.0 / a;
 	vec3 s = ray.origin - pos0;
@@ -613,7 +615,7 @@ uvec2 stack_pop(in uvec2 stack[LOCAL_STACK_SIZE], inout int stack_size)
 }
 
 
-void intersect(in Ray ray, out Intersection ray_hit)
+void intersect(in Ray ray, out Intersection ray_hit, int culling)
 {
 	ray_hit.triangle_index = -1;
 	ray_hit.t =  ray.tmax < 0.0 ? 3.402823466e+38 : ray.tmax;
@@ -672,7 +674,7 @@ void intersect(in Ray ray, out Intersection ray_hit)
 
 			int tri_idx = int(triangle_group.x + triangle_index);
 			float t,u,v;
-			if (triangle_intersect(tri_idx, ray, ray_hit.t, t, u, v))
+			if (triangle_intersect(tri_idx, ray, ray_hit.t, t, u, v, culling))
 			{
 				ray_hit.triangle_index = indices[tri_idx];				
 				ray_hit.t = t;
@@ -743,7 +745,7 @@ void main()
 	ray.tmax = -1.0;
 
 	Intersection ray_hit;
-	intersect(ray, ray_hit);
+	intersect(ray, ray_hit, 1);
 
 	float d = 1.0;
 	vec3 norm = vec3(0.0f, 0.0f, 1.0f);
