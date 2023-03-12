@@ -7,5 +7,6 @@ My test code trying to bring ray-tracing to OpenGL.
     - test1(): CPU ray-tracing using BVH2
     - test2(): OpenGL (compute shader) ray-tracing using BVH8 (CWBVH)
 
-
+![](images/depth.png)
+![](images/normal.png)
 
