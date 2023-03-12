@@ -789,7 +789,7 @@ public:
 		if (m_width != width || m_height != height)
 		{
 			glBindTexture(GL_TEXTURE_2D, m_tex->tex_id);
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_BGR, GL_UNSIGNED_BYTE, nullptr);
+			glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, width, height);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
@@ -824,7 +824,7 @@ public:
 		if (m_width != width || m_height != height)
 		{
 			glBindTexture(GL_TEXTURE_2D, m_tex->tex_id);
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, width, height, 0, GL_RED, GL_UNSIGNED_BYTE, nullptr);
+			glTexStorage2D(GL_TEXTURE_2D, 1, GL_R8, width, height);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
