@@ -266,6 +266,56 @@ struct Primitive
 	}
 };
 
+class Int32TextureBuffer
+{
+public:
+	std::unique_ptr<GLBuffer> buf;
+	unsigned tex_id;
+
+	Int32TextureBuffer()
+	{
+		glGenTextures(1, &tex_id);
+	}
+
+	~Int32TextureBuffer()
+	{
+		glDeleteTextures(1, &tex_id);
+	}
+
+	void upload(const int* data, size_t size)
+	{
+		buf = std::unique_ptr<GLBuffer>(new GLBuffer(sizeof(int) * size, GL_TEXTURE_BUFFER));
+		buf->upload(data);
+		glBindTexture(GL_TEXTURE_BUFFER, tex_id);
+		glTexBuffer(GL_TEXTURE_BUFFER, GL_R32I, buf->m_id);
+	}
+};
+
+class Vec4TextureBuffer
+{
+public:
+	std::unique_ptr<GLBuffer> buf;
+	unsigned tex_id;
+
+	Vec4TextureBuffer()
+	{
+		glGenTextures(1, &tex_id);
+	}
+
+	~Vec4TextureBuffer()
+	{
+		glDeleteTextures(1, &tex_id);
+	}
+
+	void upload(const glm::vec4* data, size_t size)
+	{
+		buf = std::unique_ptr<GLBuffer>(new GLBuffer(sizeof(glm::vec4) * size, GL_TEXTURE_BUFFER));
+		buf->upload(data);
+		glBindTexture(GL_TEXTURE_BUFFER, tex_id);
+		glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, buf->m_id);
+	}
+};
+
 class BLAS
 {
 public:
@@ -275,10 +325,10 @@ public:
 	std::vector<flex_bvh::Triangle> m_triangles;
 	flex_bvh::BVH2 m_bvh2;
 	flex_bvh::BVH8 m_bvh8;
-
-	std::unique_ptr<GLBuffer> m_buf_bvh8;
-	std::unique_ptr<GLBuffer> m_buf_triangles;
-	std::unique_ptr<GLBuffer> m_buf_indices;
+	
+	Vec4TextureBuffer m_tex_bvh8;
+	Vec4TextureBuffer m_tex_triangles;
+	Int32TextureBuffer m_tex_indices;
 };
 
 BLAS::BLAS(const Primitive* primitive)
@@ -302,8 +352,7 @@ BLAS::BLAS(const Primitive* primitive)
 	m_bvh2.create_from_triangles(m_triangles);
 	flex_bvh::ConvertBVH2ToBVH8(m_bvh2, m_bvh8);
 
-	m_buf_bvh8 = std::unique_ptr<GLBuffer>(new GLBuffer(sizeof(flex_bvh::BVHNode8) * m_bvh8.nodes.size(), GL_SHADER_STORAGE_BUFFER));
-	m_buf_bvh8->upload(m_bvh8.nodes.data());
+	m_tex_bvh8.upload((glm::vec4*)m_bvh8.nodes.data(), m_bvh8.nodes.size() * 5);
 
 	std::vector<glm::vec4> triangles(m_bvh8.indices.size()*3);
 	for (size_t i = 0; i < m_bvh8.indices.size(); i++)
@@ -314,12 +363,9 @@ BLAS::BLAS(const Primitive* primitive)
 		triangles[i * 3 + 1] = glm::vec4(tri.position_1 - tri.position_0, 0.0f);
 		triangles[i * 3 + 2] = glm::vec4(tri.position_2 - tri.position_0, 0.0f);
 	}
-
-	m_buf_triangles = std::unique_ptr<GLBuffer>(new GLBuffer(sizeof(glm::vec4) * triangles.size(), GL_SHADER_STORAGE_BUFFER));
-	m_buf_triangles->upload(triangles.data());
-
-	m_buf_indices = std::unique_ptr<GLBuffer>(new GLBuffer(sizeof(int) * m_bvh8.indices.size(), GL_SHADER_STORAGE_BUFFER));
-	m_buf_indices->upload(m_bvh8.indices.data());
+	
+	m_tex_triangles.upload(triangles.data(), triangles.size());
+	m_tex_indices.upload(m_bvh8.indices.data(), m_bvh8.indices.size());
 
 }
 
@@ -440,20 +486,9 @@ struct BVH8Node
 	vec4 node_4; 
 };
 
-layout (std430, binding = 0) buffer BVH8
-{
-	BVH8Node bvh8_nodes[];
-};
-
-layout (std430, binding = 1) buffer Triangles
-{
-	vec4 triangles[];
-};
-
-layout (std430, binding = 2) buffer Indices
-{
-	int indices[];
-};
+layout (location = 0) uniform samplerBuffer uTexBVH8;
+layout (location = 1) uniform samplerBuffer uTexTriangles;
+layout (location = 2) uniform isamplerBuffer uTexIndices;
 
 struct Ray
 {
@@ -556,9 +591,9 @@ uint bvh8_node_intersect(in Ray ray, uint oct_inv4, float max_distance, in BVH8N
 
 bool triangle_intersect(int triangle_id, in Ray ray, float max_t, out float t, out float u, out float v, int culling)
 {
-	vec3 pos0 = triangles[triangle_id*3].xyz;
-	vec3 edge1 = triangles[triangle_id*3 + 1].xyz;
-	vec3 edge2 = triangles[triangle_id*3 + 2].xyz;
+	vec3 pos0 = texelFetch(uTexTriangles, triangle_id*3).xyz;
+	vec3 edge1 = texelFetch(uTexTriangles, triangle_id*3 + 1).xyz;
+	vec3 edge2 = texelFetch(uTexTriangles, triangle_id*3 + 2).xyz;
 	
 	vec3 h = cross(ray.direction, edge2);
 	float a = dot(edge1, h);
@@ -650,7 +685,12 @@ void intersect(in Ray ray, out Intersection ray_hit, int culling)
 			uint relative_index = bitCount(hits_imask & ~(0xffffffff << slot_index));
 
 			uint child_node_index = child_index_base + relative_index;
-			BVH8Node node = bvh8_nodes[child_node_index];
+			BVH8Node node;
+			node.node_0 = texelFetch(uTexBVH8, int(child_node_index*5));
+			node.node_1 = texelFetch(uTexBVH8, int(child_node_index*5 + 1));
+			node.node_2 = texelFetch(uTexBVH8, int(child_node_index*5 + 2));
+			node.node_3 = texelFetch(uTexBVH8, int(child_node_index*5 + 3));
+			node.node_4 = texelFetch(uTexBVH8, int(child_node_index*5 + 4));
 			uint hitmask = bvh8_node_intersect(ray, oct_inv4, ray_hit.t, node);
 
 			uint imask = extract_byte(floatBitsToUint(node.node_0.w), 3);			
@@ -676,7 +716,7 @@ void intersect(in Ray ray, out Intersection ray_hit, int culling)
 			float t,u,v;
 			if (triangle_intersect(tri_idx, ray, ray_hit.t, t, u, v, culling))
 			{
-				ray_hit.triangle_index = indices[tri_idx];				
+				ray_hit.triangle_index = texelFetch(uTexIndices, tri_idx).x;
 				ray_hit.t = t;
 				ray_hit.u = u;
 				ray_hit.v = v;
@@ -692,7 +732,7 @@ void intersect(in Ray ray, out Intersection ray_hit, int culling)
 }
 
 
-layout (std140, binding = 3) uniform Camera
+layout (std140, binding = 0) uniform Camera
 {
 	mat4 uProjMat;
 	mat4 uViewMat;	
@@ -702,19 +742,19 @@ layout (std140, binding = 3) uniform Camera
 };
 
 
-layout (std140, binding = 4) uniform Model
+layout (std140, binding = 1) uniform Model
 {
 	mat4 uModelMat;
 	mat4 uNormalMat;
 };
 
 
-layout (std430, binding = 5) buffer Faces
+layout (std430, binding = 2) buffer Faces
 {
 	int faces[];
 };
 
-layout (std430, binding = 6) buffer Normals
+layout (std430, binding = 3) buffer Normals
 {
 	vec4 normals[];
 };
@@ -896,14 +936,23 @@ void test2()
 	}
 
 	glUseProgram(prog->m_id);
-	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, blas.m_buf_bvh8->m_id);
-	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, blas.m_buf_triangles->m_id);
-	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, blas.m_buf_indices->m_id);
 
-	glBindBufferBase(GL_UNIFORM_BUFFER, 3, constant_camera.m_id);
-	glBindBufferBase(GL_UNIFORM_BUFFER, 4, prim.m_constant_model.m_id);
-	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, prim.index_buf->m_id);
-	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, prim.normal_buf->m_id);
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_BUFFER, blas.m_tex_bvh8.tex_id);
+	glUniform1i(0,0);
+
+	glActiveTexture(GL_TEXTURE1);
+	glBindTexture(GL_TEXTURE_BUFFER, blas.m_tex_triangles.tex_id);
+	glUniform1i(1, 1);
+
+	glActiveTexture(GL_TEXTURE2);
+	glBindTexture(GL_TEXTURE_BUFFER, blas.m_tex_indices.tex_id);
+	glUniform1i(2, 2);
+
+	glBindBufferBase(GL_UNIFORM_BUFFER, 0, constant_camera.m_id);
+	glBindBufferBase(GL_UNIFORM_BUFFER, 1, prim.m_constant_model.m_id);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, prim.index_buf->m_id);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, prim.normal_buf->m_id);
 
 	glBindImageTexture(0, tex_test.m_tex->tex_id, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_R8);
 	glBindImageTexture(1, tex_depth.m_tex->tex_id, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_R8);
